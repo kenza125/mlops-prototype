@@ -185,9 +185,3 @@ Le pipeline CI/CD (`.github/workflows/`) s'exécute automatiquement à chaque pu
 
 **Kenza** — Étudiante ingénieure en IA & Data Science, ENSTAB  
 Spécialisation : Digitalisation et Analyse de Données (DAD)
-
----
-
-## 📄 Licence
-
-Ce projet est développé à des fins d'apprentissage MLOps.
