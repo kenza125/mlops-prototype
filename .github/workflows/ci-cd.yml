@@ -32,3 +32,66 @@ jobs:
         with:
           push: true
           tags: kenza125/sentiment-api:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Créer un cluster kind éphémère
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: mlops-ci
+
+      - name: Installer cert-manager (prérequis KServe)
+        run: |
+          kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.5/cert-manager.yaml
+          kubectl wait --for=condition=Available --timeout=180s -n cert-manager deployment/cert-manager
+          kubectl wait --for=condition=Available --timeout=180s -n cert-manager deployment/cert-manager-webhook
+          kubectl wait --for=condition=Available --timeout=180s -n cert-manager deployment/cert-manager-cainjector
+
+      - name: Installer KServe en mode RawDeployment
+        run: |
+          kubectl apply --server-side -f https://github.com/kserve/kserve/releases/download/v0.13.0/kserve.yaml
+          kubectl wait --for=condition=Available --timeout=180s -n kserve deployment/kserve-controller-manager
+          kubectl patch configmap/inferenceservice-config -n kserve --type=merge -p '{"data":{"deploy":"{\"defaultDeploymentMode\": \"RawDeployment\"}"}}'
+          kubectl rollout restart deployment/kserve-controller-manager -n kserve
+          kubectl wait --for=condition=Available --timeout=180s -n kserve deployment/kserve-controller-manager
+
+      - name: Déployer l'InferenceService
+        run: |
+          cat <<EOF | kubectl apply -f -
+          apiVersion: serving.kserve.io/v1beta1
+          kind: InferenceService
+          metadata:
+            name: sentiment-api
+          spec:
+            predictor:
+              containers:
+                - name: kserve-container
+                  image: kenza125/sentiment-api:latest
+                  ports:
+                    - containerPort: 8000
+                      protocol: TCP
+                  env:
+                    - name: MODEL_SOURCE
+                      value: pretrained
+          EOF
+
+      - name: Attendre que le pod soit prêt
+        run: |
+          kubectl wait --for=condition=Ready --timeout=300s pod -l serving.kserve.io/inferenceservice=sentiment-api
+
+      - name: Vérifier la santé du service (/health)
+        run: |
+          kubectl port-forward svc/sentiment-api-predictor 8000:80 &
+          sleep 5
+          curl --fail http://localhost:8000/health || (kubectl logs -l serving.kserve.io/inferenceservice=sentiment-api --tail=100 && exit 1)
+
+      - name: Afficher les logs en cas d'échec
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl describe inferenceservice sentiment-api
+          kubectl logs -l serving.kserve.io/inferenceservice=sentiment-api --tail=200
