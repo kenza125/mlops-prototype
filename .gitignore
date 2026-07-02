@@ -2,5 +2,9 @@ venv/
 __pycache__/
 *.pyc
 mlruns/
+mlartifacts/
 predictions_log.csv
+resultats.txt
 mlflow.db
+mlflow.db-shm
+mlflow.db-wal
