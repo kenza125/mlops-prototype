@@ -1,0 +1,2 @@
+Score moyen: 0.9958
+Nombre de textes: 5
