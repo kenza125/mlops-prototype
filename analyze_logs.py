@@ -13,11 +13,13 @@ import sys
 from collections import Counter
 
 LOG_FILE = "predictions_log.csv"
-ERROR_RATE_THRESHOLD = 0.3  # 30% d'erreurs declenche une alerte
+# predictions_log.csv n'a pas de header, colonnes : timestamp,text,label,score
+LOW_CONFIDENCE_THRESHOLD = 0.6  # score en dessous = prediction suspecte
+ERROR_RATE_THRESHOLD = 0.3  # 30% de predictions a faible confiance declenche une alerte
 
 
 def analyze_logs(log_file: str = LOG_FILE) -> dict:
-    """Lit le fichier de log et calcule un taux d'erreur simple."""
+    """Lit le fichier de log et calcule le taux de predictions a faible confiance."""
     import csv
 
     total = 0
@@ -25,11 +27,17 @@ def analyze_logs(log_file: str = LOG_FILE) -> dict:
 
     try:
         with open(log_file, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
+            reader = csv.reader(f)
             for row in reader:
+                if len(row) < 4:
+                    continue
                 total += 1
-                # adapte selon les colonnes reelles de ton predictions_log.csv
-                if row.get("status", "").lower() in ("error", "500", "fail"):
+                try:
+                    score = float(row[3])
+                except ValueError:
+                    errors += 1  # score illisible = anomalie
+                    continue
+                if score < LOW_CONFIDENCE_THRESHOLD:
                     errors += 1
     except FileNotFoundError:
         print(f"Fichier de log introuvable : {log_file}")
