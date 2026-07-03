@@ -1,187 +1,118 @@
-# 🤖 MLOps Prototype — Sentiment Analysis Pipeline
+# MLOps Prototype — Sentiment Analysis API
 
-> Prototype MLOps complet pour l'analyse de sentiment, intégrant FastAPI, Docker, MLflow et GitHub Actions CI/CD.
+Pipeline MLOps complet pour une API d'analyse de sentiment (HuggingFace DistilBERT + FastAPI), couvrant le versioning, le déploiement automatisé, le monitoring de drift et le rollback automatique.
 
----
-
-## 📌 Description
-
-Ce projet est un **prototype MLOps** développé dans le cadre d'un apprentissage progressif des bonnes pratiques de déploiement de modèles de Machine Learning en production. Il implémente un pipeline complet d'analyse de sentiment basé sur un modèle **DistilBERT** (`distilbert-base-uncased-finetuned-sst-2-english`) via HuggingFace Transformers.
-
-Le projet couvre les piliers fondamentaux du MLOps :
-- **Serving** : API REST avec FastAPI
-- **Containerisation** : Docker
-- **Tracking d'expériences** : MLflow
-- **CI/CD** : GitHub Actions
-- **Logging** : Journalisation automatique des prédictions en CSV
-
----
-
-## 🏗️ Architecture
+## Architecture
 
 ```
 mlops-prototype/
-│
-├── api.py               # API FastAPI — endpoint /predict
-├── predict.py           # Prédiction standalone (script direct)
-├── track.py             # Tracking MLflow des expériences
-├── analyze_logs.py      # Analyse des logs de prédictions
-├── test_api.py          # Tests automatisés de l'API
-│
-├── Dockerfile           # Image Docker (python:3.11-slim + uvicorn)
-├── .dockerignore        # Fichiers exclus du build Docker
-├── requirements.txt     # Dépendances Python
-├── .gitignore           # Fichiers exclus de Git
-│
-└── .github/
-    └── workflows/       # Pipelines CI/CD GitHub Actions
+├── api.py                  # API FastAPI (mode registry ou pretrained)
+├── track.py                 # Entraînement + enregistrement MLflow
+├── promote_model.py         # Gestion des alias MLflow (production, etc.)
+├── analyze_logs.py          # Détection d'anomalies + rollback automatique
+├── monitor_drift.py         # Détection de data drift (Evidently AI)
+├── predict.py
+├── test_api.py
+├── data/
+│   ├── eval_reviews.csv         # Dataset de référence (critiques de films, DVC)
+│   └── tweets_reviews.csv       # Dataset "actuel" simulé (tweets, pour le drift)
+├── .github/workflows/ci-cd.yml  # Pipeline CI/CD
+├── Dockerfile
+├── mlflow.db                 # Backend MLflow SQLite (non versionné)
+├── VERSIONING.md
+└── README.md
 ```
 
----
+## Les 4 blocs
 
-## 🛠️ Stack Technique
+### Bloc 1 — Versioning
+Trois éléments versionnés indépendamment :
+- **Code** : Git + tags sémantiques (`v0.2.0`, `v0.3.0`, ...)
+- **Données** : DVC, avec un remote **local** (`../dvc-storage`, aucun cloud requis)
+- **Modèle** : MLflow Model Registry, backend SQLite (`sqlite:///mlflow.db`), versions gérées par **alias** (`@production`) plutôt que par les anciens *stages* dépréciés depuis MLflow 2.9
 
-| Composant       | Technologie                         |
-|-----------------|-------------------------------------|
-| Framework API   | FastAPI + Uvicorn                   |
-| Modèle NLP      | HuggingFace Transformers (DistilBERT) |
-| Containerisation| Docker (python:3.11-slim)           |
-| Experiment Tracking | MLflow                          |
-| CI/CD           | GitHub Actions                      |
-| Logging         | CSV (predictions_log.csv)           |
-| Tests           | pytest / test_api.py                |
+Détails complets : voir [VERSIONING.md](./VERSIONING.md)
 
----
+### Bloc 2 — CI/CD déploiement automatisé
+À chaque push sur `main`, `.github/workflows/ci-cd.yml` exécute trois jobs en cascade :
+1. `test` — tests unitaires (`pytest`)
+2. `build-and-push` — build de l'image Docker, push vers Docker Hub (`kenza125/sentiment-api:latest`)
+3. `deploy` — déploiement sur un cluster **kind** éphémère créé dans le runner GitHub Actions, avec **KServe en mode RawDeployment** (léger, sans Istio/Knative), puis vérification de santé (`/health`)
 
-## 🚀 Démarrage Rapide
+Aucune infrastructure persistante, aucun coût cloud.
 
-### Prérequis
+### Bloc 3 — Monitoring & Data Drift
+`monitor_drift.py` utilise **Evidently AI** pour comparer :
+- le dataset de référence (`data/eval_reviews.csv`, critiques de films)
+- un dataset "actuel" simulé (`data/tweets_reviews.csv`, style tweets)
 
-- Python 3.11+
-- Docker Desktop
-- Git
+Un rapport HTML (`drift_report.html`) est généré, mesurant le drift sur la longueur des textes, le nombre de mots et la distribution des labels.
 
-### 1. Cloner le repo
+```bash
+python monitor_drift.py
+```
+
+### Bloc 4 — Debug automatique & Rollback
+`analyze_logs.py` analyse `predictions_log.csv` (colonnes : `timestamp, text, label, score`) et détecte une anomalie lorsque le taux de prédictions à faible confiance (score < 0.6) dépasse 30 %.
+
+```bash
+python analyze_logs.py                # détection seule
+python analyze_logs.py --auto-rollback  # détection + rollback automatique
+```
+
+En cas d'anomalie, le script réassigne automatiquement l'alias `production` à la version précédente du modèle via `promote_model.py` — aucun redéploiement de code nécessaire, seule l'étiquette MLflow bouge.
+
+**Scénario testé et validé** : promotion d'une version dégradée (v2) → détection automatique (taux d'erreur 30.77 % > seuil 30 %) → rollback automatique vers v1 → vérification.
+
+## Installation
 
 ```bash
 git clone https://github.com/kenza125/mlops-prototype.git
 cd mlops-prototype
-```
-
-### 2. Installation locale (sans Docker)
-
-```bash
 python -m venv venv
-# Windows
-venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-
+venv\Scripts\Activate.ps1        # Windows
 pip install -r requirements.txt
+dvc pull                          # récupère le dataset versionné
 ```
 
-### 3. Lancer l'API localement
+## Utilisation locale
 
 ```bash
-uvicorn api:app --reload --port 8000
-```
-
-Accéder à la documentation interactive : [http://localhost:8000/docs](http://localhost:8000/docs)
-
-### 4. Tester l'API
-
-```bash
-# Via curl
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"text": "I love this product!"}'
-
-# Ou via le script de test
-python test_api.py
-```
-
-**Exemple de réponse :**
-```json
-{
-  "label": "POSITIVE",
-  "score": 0.9998
-}
-```
-
----
-
-## 🐳 Déploiement avec Docker
-
-### Build de l'image
-
-```bash
-docker build -t mlops-sentiment .
-```
-
-### Lancer le conteneur
-
-```bash
-docker run -p 8000:8000 mlops-sentiment
-```
-
-L'API est disponible sur [http://localhost:8000](http://localhost:8000).
-
----
-
-## 📊 Tracking MLflow
-
-Pour enregistrer et visualiser les expériences :
-
-```bash
-# Lancer un run MLflow
+# Entraîner et enregistrer une version du modèle
 python track.py
 
-# Lancer l'interface MLflow UI
-mlflow ui
+# Promouvoir une version en production
+python promote_model.py --version 1 --alias production
+python promote_model.py --list
+
+# Lancer l'API (mode registry)
+$env:MODEL_SOURCE="registry"
+uvicorn api:app --reload
+
+# Tester
+curl.exe http://127.0.0.1:8000/health
+curl.exe -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" -d '{\"text\": \"I love this movie\"}'
 ```
 
-Accéder à l'interface : [http://localhost:5000](http://localhost:5000)
+## Stack technique
 
-Les métriques suivantes sont trackées :
-- Paramètre du modèle utilisé (`model_name`)
-- Score de confiance par prédiction (`confidence_i`)
-- Label prédit par texte (`text_i_label`)
+| Composant | Outil |
+|---|---|
+| API | FastAPI + Uvicorn |
+| Modèle | HuggingFace Transformers (DistilBERT) |
+| Tracking / Registry | MLflow (backend SQLite) |
+| Versioning données | DVC (remote local) |
+| CI/CD | GitHub Actions |
+| Déploiement | kind + KServe (RawDeployment) |
+| Monitoring drift | Evidently AI |
+| Conteneurisation | Docker |
 
----
+## Historique des versions
 
-## 📝 Logs des Prédictions
-
-Chaque appel à `/predict` est automatiquement journalisé dans `predictions_log.csv` avec :
-- Horodatage (ISO 8601)
-- Texte soumis
-- Label prédit (`POSITIVE` / `NEGATIVE`)
-- Score de confiance
-
----
-
-## ⚙️ CI/CD avec GitHub Actions
-
-Le pipeline CI/CD (`.github/workflows/`) s'exécute automatiquement à chaque push sur `main` et vérifie :
-1. Installation des dépendances
-2. Exécution des tests (`test_api.py`)
-3. Build de l'image Docker
-
----
-
-## 📁 Fichiers Clés
-
-| Fichier           | Rôle |
-|-------------------|------|
-| `api.py`          | Serveur FastAPI avec endpoint POST `/predict` |
-| `track.py`        | Script MLflow pour l'enregistrement d'expériences |
-| `predict.py`      | Prédiction standalone sans API |
-| `analyze_logs.py` | Analyse statistique des prédictions loggées |
-| `test_api.py`     | Tests automatisés de l'API |
-| `Dockerfile`      | Containerisation de l'application |
-
----
-
-## 👩‍💻 Auteure
-
-**Kenza** — Étudiante ingénieure en IA & Data Science, ENSTAB  
-Spécialisation : Digitalisation et Analyse de Données (DAD)
+| Tag | Contenu |
+|---|---|
+| v0.2.0 | Bloc 1 : versioning complet (Git, DVC, MLflow alias) |
+| v0.3.0 | Bloc 2 : CI/CD déploiement automatisé (kind + KServe) |
+| v0.4.0 | Bloc 3 : monitoring & data drift (Evidently AI) |
+| v0.5.0 | Bloc 4 : détection d'anomalies & rollback automatique |
+| v1.0.0 | Projet complet, les 4 blocs validés |
