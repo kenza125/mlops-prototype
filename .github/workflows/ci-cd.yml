@@ -54,7 +54,14 @@ jobs:
       - name: Installer KServe en mode RawDeployment
         run: |
           kubectl apply --server-side -f https://github.com/kserve/kserve/releases/download/v0.11.2/kserve.yaml
-          kubectl wait --for=condition=Available --timeout=180s -n kserve deployment/kserve-controller-manager
+
+          echo "--- Diagnostic: images du pod kserve-controller-manager ---"
+          sleep 15
+          kubectl get pod -n kserve -l control-plane=kserve-controller-manager -o jsonpath='{range .items[0].spec.containers[*]}{.name}{"="}{.image}{"\n"}{end}'
+
+          echo "--- Patch de l'image kube-rbac-proxy vers un mirror fiable ---"
+          kubectl patch deployment kserve-controller-manager -n kserve --type='json' -p='[{"op":"replace","path":"/spec/template/spec/containers/1/image","value":"quay.io/brancz/kube-rbac-proxy:v0.15.0"}]' || echo "patch skipped, index may differ"
+
           kubectl patch configmap/inferenceservice-config -n kserve --type=merge -p '{"data":{"deploy":"{\"defaultDeploymentMode\": \"RawDeployment\"}"}}'
           kubectl rollout restart deployment/kserve-controller-manager -n kserve
           kubectl wait --for=condition=Available --timeout=180s -n kserve deployment/kserve-controller-manager
@@ -93,5 +100,6 @@ jobs:
         if: failure()
         run: |
           kubectl get pods -A
+          kubectl describe pod -n kserve -l control-plane=kserve-controller-manager
           kubectl describe inferenceservice sentiment-api
           kubectl logs -l serving.kserve.io/inferenceservice=sentiment-api --tail=200
