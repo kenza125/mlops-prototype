@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+﻿name: CI/CD Pipeline
 
 on:
   push:
@@ -39,12 +39,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Créer un cluster kind éphémère
+      - name: Creer un cluster kind ephemere
         uses: helm/kind-action@v1.10.0
         with:
           cluster_name: mlops-ci
 
-      - name: Installer cert-manager (prérequis KServe)
+      - name: Installer cert-manager
         run: |
           kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.5/cert-manager.yaml
           kubectl wait --for=condition=Available --timeout=180s -n cert-manager deployment/cert-manager
@@ -53,13 +53,13 @@ jobs:
 
       - name: Installer KServe en mode RawDeployment
         run: |
-        kubectl apply --server-side -f https://github.com/kserve/kserve/releases/download/v0.11.2/kserve.yaml
+          kubectl apply --server-side -f https://github.com/kserve/kserve/releases/download/v0.11.2/kserve.yaml
           kubectl wait --for=condition=Available --timeout=180s -n kserve deployment/kserve-controller-manager
           kubectl patch configmap/inferenceservice-config -n kserve --type=merge -p '{"data":{"deploy":"{\"defaultDeploymentMode\": \"RawDeployment\"}"}}'
           kubectl rollout restart deployment/kserve-controller-manager -n kserve
           kubectl wait --for=condition=Available --timeout=180s -n kserve deployment/kserve-controller-manager
 
-      - name: Déployer l'InferenceService
+      - name: Deployer l'InferenceService
         run: |
           cat <<EOF | kubectl apply -f -
           apiVersion: serving.kserve.io/v1beta1
@@ -79,17 +79,17 @@ jobs:
                       value: pretrained
           EOF
 
-      - name: Attendre que le pod soit prêt
+      - name: Attendre que le pod soit pret
         run: |
           kubectl wait --for=condition=Ready --timeout=300s pod -l serving.kserve.io/inferenceservice=sentiment-api
 
-      - name: Vérifier la santé du service (/health)
+      - name: Verifier la sante du service
         run: |
           kubectl port-forward svc/sentiment-api-predictor 8000:80 &
           sleep 5
           curl --fail http://localhost:8000/health || (kubectl logs -l serving.kserve.io/inferenceservice=sentiment-api --tail=100 && exit 1)
 
-      - name: Afficher les logs en cas d'échec
+      - name: Afficher les logs en cas d'echec
         if: failure()
         run: |
           kubectl get pods -A
